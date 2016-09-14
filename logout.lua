@@ -28,4 +28,5 @@ session:destroy()
 
 ngx.header["Set-Cookie"] = "OauthAccessToken=deleted; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT"
 -- https://login.microsoftonline.com/common/oauth2/logout?post_logout_redirect_uri=https%3a%2f%2fportal.azure.com%2f&client_id=c44b4083-3bb0-49c1-b47d-974e53cbdf3c&redirect_uri=https%3a%2f%2fportal.azure.com%2fsignin%2findex&site_id=501430&prompt=select_account
-return ngx.redirect("https://login.microsoftonline.com/common/oauth2/logout?post_logout_redirect_uri="..ngx.escape_uri(scheme.."://"..server_name).."&client_id="..client_id.."&redirect_uri="..ngx.escape_uri(scheme.."://"..server_name))
+return ngx.redirect("http://127.0.0.1:30240/auth/realms/nginx-keycloak-POC/protocol/openid-connect/logout?redirect_uri=http://127.0.0.1:30240/")
+

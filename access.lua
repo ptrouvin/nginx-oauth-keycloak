@@ -27,11 +27,22 @@ end
 -- pcall(require,"https")
 -- local https = require "ssl.https" -- /usr/share/lua/5.1/https.lua
 
+local _debug = ngx.var.ngo_debug
+if _debug == "0" or _debug == "false" then
+  _debug = false;
+end
+
 local http = require "resty.http"
 local session = require "resty.session".new()
 
 local uri = ngx.var.uri
 local uri_args = ngx.req.get_uri_args()
+if _debug then
+	local json=require "cjson"
+	ngx.log(ngx.ERR,"DEBUG: uri args: "..uri.." = "..json.encode(uri_args))
+	ngx.log(ngx.ERR,"DEBUG: uri args: "..ngx.var.request)
+end
+
 local scheme = ngx.var.scheme
 local server_name = ngx.var.server_name
 local url = scheme.."://"..(ngx.var.host .. ngx.var.uri)
@@ -43,14 +54,10 @@ local client_id = ngx.var.ngo_client_id
 local domain = ngx.var.ngo_domain
 local cb_scheme = ngx.var.ngo_callback_scheme or scheme
 local cb_server_name = ngx.var.ngo_callback_host or server_name
-local cb_uri = ngx.var.ngo_callback_uri or uri or "/_oauth"
+local cb_uri = ngx.var.ngo_callback_uri or uri or "/oauth"
 local cb_url = cb_scheme.."://"..cb_server_name..cb_uri
-local redir_url = cb_scheme.."://"..cb_server_name..uri
-local signout_uri = ngx.var.ngo_signout_uri or "/_signout"
-local _debug = ngx.var.ngo_debug
-if _debug == "0" or _debug == "false" then
-	_debug = false;
-end
+local redir_url = ngx.var.ngo_callback_url or cb_scheme.."://"..cb_server_name..uri
+local signout_uri = ngx.var.ngo_signout_uri or "/signout"
 local whitelist = ngx.var.ngo_whitelist
 local blacklist = ngx.var.ngo_blacklist
 local secure_cookies = ngx.var.ngo_secure_cookies
@@ -64,13 +71,13 @@ local email_as_user = ngx.var.ngo_email_as_user
 local groups_required_string = ngx.var.ngo_groups_required or ""
 local groups_required = {}
 if groups_required_string then
-	for g in string.gmatch(groups_required_string, "([^ ,]+)") do
-		table.insert(groups_required, g)
-	end
+  for g in string.gmatch(groups_required_string, "([^ ,]+)") do
+    table.insert(groups_required, g)
+  end
 end
 
 if _debug then
-	ngx.log(ngx.ERR, "DEBUG: url= "..url.." scheme="..scheme.." host="..ngx.var.host.." uri="..uri.." args="..jsonmod.encode(uri_args))
+  ngx.log(ngx.ERR, "DEBUG: url= "..url.." scheme="..scheme.." host="..ngx.var.host.." uri="..uri.." args="..jsonmod.encode(uri_args))
 end
 -- Force the user to set a token secret
 if token_secret == "UNSET" then
@@ -87,7 +94,8 @@ if uri == signout_uri or string.sub(uri,-string.len(signout_uri)) == signout_uri
   
   ngx.header["Set-Cookie"] = "OauthAccessToken=deleted; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT"
   -- https://login.microsoftonline.com/common/oauth2/logout?post_logout_redirect_uri=https%3a%2f%2fportal.azure.com%2f&client_id=c44b4083-3bb0-49c1-b47d-974e53cbdf3c&redirect_uri=https%3a%2f%2fportal.azure.com%2fsignin%2findex&site_id=501430&prompt=select_account
-  return ngx.redirect("https://login.microsoftonline.com/common/oauth2/logout?post_logout_redirect_uri="..ngx.escape_uri(cb_scheme.."://"..server_name).."&client_id="..client_id.."&redirect_uri="..ngx.escape_uri(cb_scheme.."://"..server_name))
+  -- return ngx.redirect("http://login.microsoftonline.com/common/oauth2/logout?post_logout_redirect_uri="..ngx.escape_uri(cb_scheme.."://"..server_name).."&client_id="..client_id.."&redirect_uri="..ngx.escape_uri(cb_scheme.."://"..server_name))
+  return ngx.redirect("http://127.0.0.1:30240/auth/realms/nginx-keycloak-POC/protocol/openid-connect/logout")
 end
 
 function checkAccessControl(access_token)
@@ -107,36 +115,40 @@ function checkAccessControl(access_token)
   end
   local json_claims = jsonmod.decode(_claims)
 
+  if #groups_required == 0 then
+	return json_claims
+  end
+  
   local groups = json_claims["groups"]
   if not groups then
-	local email = json_claims["email"] or json_claims["unique_name"] or json_claims["upn"]
-	ngx.log(ngx.ERR, "User "..email.." access refused, no groups defined")
-	return ngx.exit(ngx.HTTP_UNAUTHORIZED)
+     local email = json_claims["email"] or json_claims["unique_name"] or json_claims["upn"]
+     ngx.log(ngx.ERR, "User "..email.." access refused, no groups defined")
+     return ngx.exit(ngx.HTTP_UNAUTHORIZED)
   end
   if groups_required then
-	  -- check for required rights, and then belongs to all required groups
-	  local ugrp = {}
-	  for _,v in ipairs(groups) do
-			ugrp[v] = 1
-	  end
-	  
-	  if _debug then
+    -- check for required rights, and then belongs to all required groups
+    local ugrp = {}
+    for _,v in ipairs(groups) do
+      ugrp[v] = 1
+    end
+    
+    if _debug then
 		ngx.log(ngx.ERR, "DEBUG: checkAccessControl: groups="..type(groups).." required="..type(groups_required))
 		ngx.log(ngx.ERR, "DEBUG: checkAccessControl: groups="..jsonmod.encode(groups).." required="..jsonmod.encode(groups_required))
-	  end
+    end
 
-	  
-	  for _,v in ipairs(groups_required) do
-			if not ugrp[v] then
-				local email = json_claims["email"] or json_claims["unique_name"] or json_claims["upn"]
-				ngx.log(ngx.ERR, "User "..email.." access refused, missing group "..v)
-				return ngx.exit(ngx.HTTP_UNAUTHORIZED)
-			end
-	  end
+    
+    for _,v in ipairs(groups_required) do
+      if not ugrp[v] then
+        local email = json_claims["email"] or json_claims["unique_name"] or json_claims["upn"]
+        ngx.log(ngx.ERR, "User "..email.." access refused, missing group "..v)
+        return ngx.exit(ngx.HTTP_UNAUTHORIZED)
+      end
+    end
   else
-	  if _debug then
-		ngx.log(ngx.ERR, "DEBUG: checkAccessControl: no required groups defined")
-	  end
+    if _debug then
+    ngx.log(ngx.ERR, "DEBUG: checkAccessControl: no required groups defined")
+    end
   end
   
   return json_claims
@@ -150,108 +162,113 @@ local oauth_access_token = ngx.unescape_uri(ngx.var.cookie_OauthAccessToken or "
 local expected_token = ngx.encode_base64(ngx.hmac_sha1(token_secret, cb_server_name .. oauth_email .. oauth_expires))
 
 if oauth_access_token == expected_token and oauth_expires and oauth_expires > ngx.time() then
-	-- JWT access_token is still valid
+  -- JWT access_token is still valid
 
-	-- Populate the nginx 'ngo_user' variable with our Oauth username, if requested
-	if set_user then
-		local oauth_user, oauth_domain = oauth_email:match("([^@]+)@(.+)")
-		if email_as_user then
-			ngx.var.ngo_user = email
-		else
-			ngx.var.ngo_user = oauth_user
-		end
-	end
-	
-	-- restore OAUTH JWT token
-	session:open()
-	local access_tokenB64 = session.data.access_token or ""
-	if not access_tokenB64 then
-		ngx.log(ngx.ERR, "Security failure: token is present but the OAUTH token is not")
-		return ngx.exit(400)
-	end
-	local access_token = ngx.decode_base64(access_tokenB64)
-	
-	-- check for access control : groups required
-	local json_claims = checkAccessControl(access_token)
-	
-	return
+  -- Populate the nginx 'ngo_user' variable with our Oauth username, if requested
+  if set_user then
+    local oauth_user, oauth_domain = oauth_email:match("([^@]+)@(.+)")
+    if email_as_user then
+      ngx.var.ngo_user = email
+    else
+      ngx.var.ngo_user = oauth_user
+    end
+  end
+  
+  -- restore OAUTH JWT token
+  session:open()
+  local access_tokenB64 = session.data.access_token or ""
+  if not access_tokenB64 then
+    ngx.log(ngx.ERR, "Security failure: token is present but the OAUTH token is not")
+    return ngx.exit(400)
+  end
+  local access_token = ngx.decode_base64(access_tokenB64)
+  
+  -- check for access control : groups required
+  local json_claims = checkAccessControl(access_token)
+  
+  return
   
 else
-	-- No valid JWT access_token or expired
+  -- No valid JWT access_token or expired
 
-	-- Fetch the authorization code from the parameters
-	local auth_code = uri_args["code"]
-	-- If no access token and this isn't the callback URI, redirect to oauth
-	if not auth_code then
-		-- Redirect to the /oauth endpoint, request access to ALL scopes
-		-- return ngx.redirect("https://accounts.google.com/o/oauth2/auth?client_id="..client_id.."&scope=email&response_type=code&redirect_uri="..ngx.escape_uri(cb_url).."&state="..ngx.escape_uri(redir_url).."&login_hint="..ngx.escape_uri(domain))
-		-- https://login.windows.net/<<YOUR-AD-TENANT-ID>>/oauth2/authorize?client_id=<<GUID>>&response_type=code
-		return ngx.redirect("https://login.windows.net/"..tenant_id.."/oauth2/authorize?client_id="..client_id.."&response_type=code&state="..ngx.escape_uri(url))
-	end
+  -- Fetch the authorization code from the parameters
+  -- local auth_code = uri_args["code"]
+  local auth_code = uri_args.code
+  -- If no access token and this isn't the callback URI, redirect to oauth
+  if not auth_code then
+    -- Redirect to the /oauth endpoint, request access to ALL scopes
+    -- return ngx.redirect("https://accounts.google.com/o/oauth2/auth?client_id="..client_id.."&scope=email&response_type=code&redirect_uri="..ngx.escape_uri(cb_url).."&state="..ngx.escape_uri(redir_url).."&login_hint="..ngx.escape_uri(domain))
+    -- https://login.windows.net/<<YOUR-AD-TENANT-ID>>/oauth2/authorize?client_id=<<GUID>>&response_type=code
+    -- return ngx.redirect("https://login.windows.net/"..tenant_id.."/oauth2/authorize?client_id="..client_id.."&response_type=code&state="..ngx.escape_uri(url))
+    local random = require "resty.random"
+    local uuid = random.token(10)
+    return ngx.redirect("http://127.0.0.1:30240/auth/realms/nginx-keycloak-POC/protocol/openid-connect/auth?client_id=nginx-oauth&redirect_uri=" .. ngx.escape_uri(redir_url) .. "&state=" .. ngx.escape_uri(redir_url) .. "&nonce=" .. random.token(10) .. "&response_mode=query&response_type=code&scope=openid")
+  end
 
-	local auth_error = uri_args["error"]
+  local auth_error = uri_args["error"]
 
-	if auth_error then
-		ngx.log(ngx.ERR, "received "..auth_error.." from https://login.windows.net/")
-		return ngx.exit(ngx.HTTP_UNAUTHORIZED)
-	end
+  if auth_error then
+    ngx.log(ngx.ERR, "received "..auth_error.." from https://login.windows.net/")
+    return ngx.exit(ngx.HTTP_UNAUTHORIZED)
+  end
 
-	if _debug then
-		ngx.log(ngx.ERR, "DEBUG: fetching token for auth code "..auth_code)
-	end
+  if _debug then
+    ngx.log(ngx.ERR, "DEBUG: fetching token for auth code "..auth_code)
+  end
 
-	-- TODO: Switch to NBIO sockets
-	-- If I get around to working luasec, this says how to pass a function which
-	-- can generate a socket, needed for NBIO using nginx cosocket
-	-- http://lua-users.org/lists/lua-l/2009-02/msg00251.html
-	-- local res, code, headers, status = https.request(
+  -- TODO: Switch to NBIO sockets
+  -- If I get around to working luasec, this says how to pass a function which
+  -- can generate a socket, needed for NBIO using nginx cosocket
+  -- http://lua-users.org/lists/lua-l/2009-02/msg00251.html
+  -- local res, code, headers, status = https.request(
     -- "https://accounts.google.com/o/oauth2/token",
-	-- "code="..ngx.escape_uri(auth_code).."&client_id="..client_id.."&client_secret="..client_secret.."&redirect_uri="..ngx.escape_uri(cb_url).."&grant_type=authorization_code"
-	-- POST /<<AD-TENANT-ID>>/oauth2/token HTTP/1.1
-	-- Host: login.windows.net
-	-- Content-Type: application/x-www-form-urlencoded
-	-- 
-	-- grant_type=authorization_code&code=<<CODE>>&redirect_uri=<<REDIRECT_URI>>&client_id=<<CLIENT_ID>>&resource=https://management.core.windows.net/
-	local httpc = http.new()
-	local res, err = httpc:request_uri("https://login.windows.net:443/"..tenant_id.."/oauth2/token", {
+  -- "code="..ngx.escape_uri(auth_code).."&client_id="..client_id.."&client_secret="..client_secret.."&redirect_uri="..ngx.escape_uri(cb_url).."&grant_type=authorization_code"
+  -- POST /<<AD-TENANT-ID>>/oauth2/token HTTP/1.1
+  -- Host: login.windows.net
+  -- Content-Type: application/x-www-form-urlencoded
+  -- 
+  -- grant_type=authorization_code&code=<<CODE>>&redirect_uri=<<REDIRECT_URI>>&client_id=<<CLIENT_ID>>&resource=https://management.core.windows.net/
+  local httpc = http.new()
+  local res, err = httpc:request_uri("http://127.0.0.1:8080/auth/realms/nginx-keycloak-POC/protocol/openid-connect/token", {
         method = "POST",
-		headers = { 
-			["Content-Type"] = "application/x-www-form-urlencoded", 
-			["Host"] = "login.windows.net" 
-		},
-		ssl_verify = false,
-		body = "code="..ngx.escape_uri(auth_code).."&client_id="..client_id.."&redirect_uri="..url.."&grant_type=authorization_code&resource=https://management.core.windows.net/"
+    	headers = { 
+	      ["Content-Type"] = "application/x-www-form-urlencoded",
+	      ["Host"] = "127.0.0.1:30240"
+		  -- ["Authorization"] = "Bearer "..ngx.var.ngo_client_id
+	    },
+	ssl_verify = false,
+	body = "code="..ngx.escape_uri(auth_code).."&redirect_uri="..ngx.escape_uri(redir_url).."&grant_type=authorization_code&client_id="..ngx.escape_uri(ngx.var.ngo_client_id).."&client_secret="..ngx.escape_uri(ngx.var.ngo_token_secret)
       })
 
-	if not res then
-		ngx.log(ngx.ERR, "failed to request: ".. err)
-		return ngx.exit(ngx.HTTP_UNAUTHORIZED)
-	end
+  if not res then
+    ngx.log(ngx.ERR, "failed to request: ".. err)
+    return ngx.exit(ngx.HTTP_UNAUTHORIZED)
+  end
 
-	-- In this simple form, there is no manual connection step, so the body is read
-	-- all in one go, including any trailers, and the connection closed or keptalive
-	-- for you.
+  -- In this simple form, there is no manual connection step, so the body is read
+  -- all in one go, including any trailers, and the connection closed or keptalive
+  -- for you.
 
-	ngx.status = res.status
+  ngx.status = res.status
 
-	if _debug then 
-		ngx.log(ngx.ERR, "DEBUG BODY: "..res.body.." headers: "..jsonmod.encode(res.headers))
-	end
-	
+  if _debug then 
+    ngx.log(ngx.ERR, "DEBUG BODY: "..res.body.." headers: "..jsonmod.encode(res.headers))
+  end
+  
   if res.status~=200 then
-		ngx.log(ngx.ERR, "received "..res.status.." : "..res.body.." from https://login.windows.net/c69f849e-7486-400c-a6c0-66255342b7e6/oauth2/token")
-		return ngx.exit(ngx.HTTP_UNAUTHORIZED)
+    ngx.log(ngx.ERR, "received "..res.status.." : "..res.body.." from http://127.0.0.1:8080/auth/realms/nginx-keycloak-POC/protocol/openid-connect/token")
+    return ngx.exit(ngx.HTTP_UNAUTHORIZED)
   end
 
   -- use version 1 cookies so we don't have to encode. MSIE-old beware
   local json  = jsonmod.decode( res.body )
   if _debug then
-	ngx.log(ngx.ERR, "DEBUG: JSON returned: "..res.body)
+  ngx.log(ngx.ERR, "DEBUG: JSON returned: "..res.body)
   end
   local access_token = json["access_token"]
   local expires = ngx.time() + json["expires_in"]
   local cookie_tail = ";version=1;path=/;Max-Age="..json["expires_in"]
-  if secure_cookies then
+  if secure_cookies == "true" then
     cookie_tail = cookie_tail..";secure"
   end
 
@@ -299,7 +316,7 @@ else
     "OauthName="..ngx.escape_uri(name)..cookie_tail,
     "OauthEmail="..ngx.escape_uri(email)..cookie_tail,
     "OauthPicture="..ngx.escape_uri(picture)..cookie_tail,
-	"OauthGroups="..ngx.escape_uri(jsonmod.encode(groups))..cookie_tail
+  "OauthGroups="..ngx.escape_uri(jsonmod.encode(groups))..cookie_tail
   }
   
   -- save the JWT OAUTH token in session
@@ -322,3 +339,4 @@ else
 
   return ngx.redirect(uri_args["state"]) 
 end
+
