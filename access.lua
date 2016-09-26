@@ -15,7 +15,6 @@
 -- import requirements
 
 -- allow either cjson, or th-LuaJSON
--- resty-session https://github.com/bungle/lua-resty-session
 local has_cjson, jsonmod = pcall(require, "cjson")
 if not has_cjson then
   jsonmod = require "json"
@@ -33,7 +32,6 @@ if _debug == "0" or _debug == "false" then
 end
 
 local http = require "resty.http"
-local session = require "resty.session".new()
 
 local uri = ngx.var.uri
 local uri_args = ngx.req.get_uri_args()
@@ -88,13 +86,7 @@ end
 -- See https://developers.google.com/accounts/docs/OAuth2WebServer 
 -- or uri ends with /_signout
 if uri == signout_uri or string.sub(uri,-string.len(signout_uri)) == signout_uri then
-  -- destroy associated web session
-  session:open()
-  session:destroy()
-  
   ngx.header["Set-Cookie"] = "OauthAccessToken=deleted; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT"
-  -- https://login.microsoftonline.com/common/oauth2/logout?post_logout_redirect_uri=https%3a%2f%2fportal.azure.com%2f&client_id=c44b4083-3bb0-49c1-b47d-974e53cbdf3c&redirect_uri=https%3a%2f%2fportal.azure.com%2fsignin%2findex&site_id=501430&prompt=select_account
-  -- return ngx.redirect("http://login.microsoftonline.com/common/oauth2/logout?post_logout_redirect_uri="..ngx.escape_uri(cb_scheme.."://"..server_name).."&client_id="..client_id.."&redirect_uri="..ngx.escape_uri(cb_scheme.."://"..server_name))
   return ngx.redirect("http://127.0.0.1:30240/auth/realms/nginx-keycloak-POC/protocol/openid-connect/logout")
 end
 
@@ -158,10 +150,11 @@ end
 -- Enforce token security and expiration
 local oauth_expires = tonumber(ngx.var.cookie_OauthExpires) or 0
 local oauth_email = ngx.unescape_uri(ngx.var.cookie_OauthEmail or "")
-local oauth_access_token = ngx.unescape_uri(ngx.var.cookie_OauthAccessToken or "")
-local expected_token = ngx.encode_base64(ngx.hmac_sha1(token_secret, cb_server_name .. oauth_email .. oauth_expires))
+local oauth_token_sign = ngx.unescape_uri(ngx.var.cookie_OauthAccessTokenSign or "")
+local access_token = ngx.unescape_uri(ngx.var.cookie_OauthAccessToken or "")
+local expected_token = ngx.encode_base64(ngx.hmac_sha1(token_secret, cb_server_name .. access_token .. oauth_email .. oauth_expires))
 
-if oauth_access_token == expected_token and oauth_expires and oauth_expires > ngx.time() then
+if oauth_token_sign == expected_token and oauth_expires and oauth_expires > ngx.time() then
   -- JWT access_token is still valid
 
   -- Populate the nginx 'ngo_user' variable with our Oauth username, if requested
@@ -175,13 +168,10 @@ if oauth_access_token == expected_token and oauth_expires and oauth_expires > ng
   end
   
   -- restore OAUTH JWT token
-  session:open()
-  local access_tokenB64 = session.data.access_token or ""
-  if not access_tokenB64 then
-    ngx.log(ngx.ERR, "Security failure: token is present but the OAUTH token is not")
+  if not access_token then
+    ngx.log(ngx.ERR, "Security failure: the OAUTH token is not set")
     return ngx.exit(400)
   end
-  local access_token = ngx.decode_base64(access_tokenB64)
   
   -- check for access control : groups required
   local json_claims = checkAccessControl(access_token)
@@ -236,8 +226,8 @@ else
 	      ["Host"] = "127.0.0.1:30240"
 		  -- ["Authorization"] = "Bearer "..ngx.var.ngo_client_id
 	    },
-	ssl_verify = false,
-	body = "code="..ngx.escape_uri(auth_code).."&redirect_uri="..ngx.escape_uri(redir_url).."&grant_type=authorization_code&client_id="..ngx.escape_uri(ngx.var.ngo_client_id).."&client_secret="..ngx.escape_uri(ngx.var.ngo_token_secret)
+		ssl_verify = false,
+		body = "code="..ngx.escape_uri(auth_code).."&redirect_uri="..ngx.escape_uri(redir_url).."&grant_type=authorization_code&client_id="..ngx.escape_uri(ngx.var.ngo_client_id).."&client_secret="..ngx.escape_uri(ngx.var.ngo_token_secret)
       })
 
   if not res then
@@ -276,9 +266,8 @@ else
   local name = json_claims["name"]
   local email = json_claims["email"] or json_claims["unique_name"] or json_claims["upn"]
   local picture = json_claims["ipaddr"]
-  local groups = json_claims["groups"]
   
-  local token = ngx.encode_base64(ngx.hmac_sha1(token_secret, cb_server_name .. email .. expires))
+  local tokenSign = ngx.encode_base64(ngx.hmac_sha1(token_secret, cb_server_name .. access_token .. email .. expires))
 
   local oauth_user, oauth_domain = email:match("([^@]+)@(.+)")
 
@@ -311,20 +300,15 @@ else
   end
 
   ngx.header["Set-Cookie"] = {
-    "OauthAccessToken="..ngx.escape_uri(token)..cookie_tail,
+    "OauthAccessToken="..ngx.escape_uri(access_token)..cookie_tail,
+    "OauthTokenSign="..ngx.escape_uri(tokenSign)..cookie_tail,
     "OauthExpires="..expires..cookie_tail,
     "OauthName="..ngx.escape_uri(name)..cookie_tail,
     "OauthEmail="..ngx.escape_uri(email)..cookie_tail,
-    "OauthPicture="..ngx.escape_uri(picture)..cookie_tail,
-  "OauthGroups="..ngx.escape_uri(jsonmod.encode(groups))..cookie_tail
+    "OauthPicture="..ngx.escape_uri(picture)..cookie_tail
   }
   
-  -- save the JWT OAUTH token in session
-  session:start()
-  session.data.access_token = ngx.encode_base64(access_token)
-  session:save()
-
-
+  
   -- Populate our ngo_user variable
   if set_user then
     if email_as_user then

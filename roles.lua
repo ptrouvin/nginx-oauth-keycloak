@@ -13,14 +13,12 @@
 -- import requirements
 
 -- allow either cjson, or th-LuaJSON
--- resty-session https://github.com/bungle/lua-resty-session
 local has_cjson, jsonmod = pcall(require, "cjson")
 if not has_cjson then
   jsonmod = require "json"
 end
 
 local http = require "resty.http"
-local session = require "resty.session".open()
 
 local scheme = ngx.var.scheme
 local server_name = ngx.var.server_name
@@ -29,7 +27,11 @@ local uri_args = ngx.req.get_uri_args()
 local group_id = uri_args["group_id"] or ""
 local user = ngx.var.cookie_OauthEmail or "UNKNOWN"
 ngx.log(ngx.ERR, "user:"..user.." GROUP_REQUEST:"..group_id)
-local access_token = ngx.decode_base64(session.data.access_token or "")
+local oauth_expires = tonumber(ngx.var.cookie_OauthExpires) or 0
+local oauth_email = ngx.unescape_uri(ngx.var.cookie_OauthEmail or "")
+local oauth_token_sign = ngx.unescape_uri(ngx.var.cookie_OauthAccessTokenSign or "")
+local access_token = ngx.unescape_uri(ngx.var.cookie_OauthAccessToken or "")
+local expected_token = ngx.encode_base64(ngx.hmac_sha1(token_secret, cb_server_name .. access_token .. oauth_email .. oauth_expires))
 local _debug = ngx.var.ngo_debug
 if _debug == "0" or _debug == "false" then
   _debug = false;
@@ -60,6 +62,13 @@ function getGroupsDetails(group_id)
   end
   
   return jsonmod.decode(res.body)
+end
+
+
+if oauth_token_sign != expected_token or oauth_expires or oauth_expires <= ngx.time() then
+  -- token invalid or expired
+  ngx.log(ngx.ERR, "roles access requested while invalid token")
+  return ngx.exit(ngx.HTTP_UNAUTHORIZED)
 end
 
 -- groupsData : hash table which will be sent back at the end
