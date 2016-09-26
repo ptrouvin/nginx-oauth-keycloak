@@ -18,10 +18,23 @@ local scheme = ngx.var.scheme
 local server_name = ngx.var.server_name
 local client_id = ngx.var.ngo_client_id
 local user = ngx.var.cookie_OauthEmail or "UNKNOWN"
+local redir_url = ngx.var.ngo_callback_url or cb_scheme.."://"..cb_server_name..uri
+local signout_uri = ngx.var.ngo_callback_logout or "/signout"
 ngx.log(ngx.ERR, "user logout: "..user)
 
+-- check if end with a '/'
+if redir_url:sub(redir_url:len()) ~= '/' then
+	redir_url = redir_url .. '/'
+end
 
-ngx.header["Set-Cookie"] = "OauthAccessToken=deleted; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT"
--- https://login.microsoftonline.com/common/oauth2/logout?post_logout_redirect_uri=https%3a%2f%2fportal.azure.com%2f&client_id=c44b4083-3bb0-49c1-b47d-974e53cbdf3c&redirect_uri=https%3a%2f%2fportal.azure.com%2fsignin%2findex&site_id=501430&prompt=select_account
-return ngx.redirect("http://127.0.0.1:30240/auth/realms/nginx-keycloak-POC/protocol/openid-connect/logout?redirect_uri=http://127.0.0.1:30240/")
+
+ngx.header["Set-Cookie"] = {
+"OauthAccessToken=deleted; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT",
+"OauthTokenSign==deleted; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT",
+"OauthExpires==deleted; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT",
+"OauthName==deleted; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT",
+"OauthEmail==deleted; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT",
+"OauthPicture==deleted; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT"
+}
+return ngx.redirect(signout_uri .. "?redirect_uri=" .. redir_url)
 

@@ -55,13 +55,21 @@ local cb_server_name = ngx.var.ngo_callback_host or server_name
 local cb_uri = ngx.var.ngo_callback_uri or uri or "/oauth"
 local cb_url = cb_scheme.."://"..cb_server_name..cb_uri
 local redir_url = ngx.var.ngo_callback_url or cb_scheme.."://"..cb_server_name..uri
-local signout_uri = ngx.var.ngo_signout_uri or "/signout"
+local token_url = ngx.var.ngo_callback_token or "/token"
+local auth_url = ngx.var.ngo_callback_auth or "/auth"
+local signout_uri = ngx.var.ngo_callback_logout or "/signout"
 local whitelist = ngx.var.ngo_whitelist
 local blacklist = ngx.var.ngo_blacklist
 local secure_cookies = ngx.var.ngo_secure_cookies
 local token_secret = ngx.var.ngo_token_secret or "UNSET"
 local set_user = ngx.var.ngo_user
 local email_as_user = ngx.var.ngo_email_as_user
+
+-- check if end with a '/'
+if redir_url:sub(redir_url:len()) ~= '/' then
+	redir_url = redir_url .. '/'
+end
+
 
 -- required rights to grant access, check that the user belongs to all groups, 
 -- that means, the user has all required groups in the groups field of his access_token
@@ -86,8 +94,16 @@ end
 -- See https://developers.google.com/accounts/docs/OAuth2WebServer 
 -- or uri ends with /_signout
 if uri == signout_uri or string.sub(uri,-string.len(signout_uri)) == signout_uri then
-  ngx.header["Set-Cookie"] = "OauthAccessToken=deleted; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT"
-  return ngx.redirect("http://127.0.0.1:30240/auth/realms/nginx-keycloak-POC/protocol/openid-connect/logout")
+  ngx.header["Set-Cookie"] = {
+    "OauthAccessToken=deleted; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT",
+    "OauthTokenSign==deleted; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT",
+    "OauthExpires==deleted; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT",
+    "OauthName==deleted; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT",
+    "OauthEmail==deleted; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT",
+    "OauthPicture==deleted; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT"
+  }
+
+  return ngx.redirect(signout_uri .. "?redirect_uri=" .. redir_url)
 end
 
 function checkAccessControl(access_token)
@@ -150,7 +166,7 @@ end
 -- Enforce token security and expiration
 local oauth_expires = tonumber(ngx.var.cookie_OauthExpires) or 0
 local oauth_email = ngx.unescape_uri(ngx.var.cookie_OauthEmail or "")
-local oauth_token_sign = ngx.unescape_uri(ngx.var.cookie_OauthAccessTokenSign or "")
+local oauth_token_sign = ngx.unescape_uri(ngx.var.cookie_OauthTokenSign or "")
 local access_token = ngx.unescape_uri(ngx.var.cookie_OauthAccessToken or "")
 local expected_token = ngx.encode_base64(ngx.hmac_sha1(token_secret, cb_server_name .. access_token .. oauth_email .. oauth_expires))
 
@@ -192,13 +208,13 @@ else
     -- return ngx.redirect("https://login.windows.net/"..tenant_id.."/oauth2/authorize?client_id="..client_id.."&response_type=code&state="..ngx.escape_uri(url))
     local random = require "resty.random"
     local uuid = random.token(10)
-    return ngx.redirect("http://127.0.0.1:30240/auth/realms/nginx-keycloak-POC/protocol/openid-connect/auth?client_id=nginx-oauth&redirect_uri=" .. ngx.escape_uri(redir_url) .. "&state=" .. ngx.escape_uri(redir_url) .. "&nonce=" .. random.token(10) .. "&response_mode=query&response_type=code&scope=openid")
+    return ngx.redirect( auth_url .. "&redirect_uri=" .. ngx.escape_uri(redir_url) .. "&state=" .. ngx.escape_uri(redir_url) .. "&nonce=" .. random.token(10) .. "&response_mode=query&response_type=code&scope=openid")
   end
 
   local auth_error = uri_args["error"]
 
   if auth_error then
-    ngx.log(ngx.ERR, "received "..auth_error.." from https://login.windows.net/")
+    ngx.log(ngx.ERR, "received "..auth_error.." from "..auth_url)
     return ngx.exit(ngx.HTTP_UNAUTHORIZED)
   end
 
@@ -219,7 +235,7 @@ else
   -- 
   -- grant_type=authorization_code&code=<<CODE>>&redirect_uri=<<REDIRECT_URI>>&client_id=<<CLIENT_ID>>&resource=https://management.core.windows.net/
   local httpc = http.new()
-  local res, err = httpc:request_uri("http://127.0.0.1:8080/auth/realms/nginx-keycloak-POC/protocol/openid-connect/token", {
+  local res, err = httpc:request_uri( token_url, {
         method = "POST",
     	headers = { 
 	      ["Content-Type"] = "application/x-www-form-urlencoded",
@@ -246,7 +262,7 @@ else
   end
   
   if res.status~=200 then
-    ngx.log(ngx.ERR, "received "..res.status.." : "..res.body.." from http://127.0.0.1:8080/auth/realms/nginx-keycloak-POC/protocol/openid-connect/token")
+    ngx.log(ngx.ERR, "received "..res.status.." : "..res.body.." from "..token_url)
     return ngx.exit(ngx.HTTP_UNAUTHORIZED)
   end
 
