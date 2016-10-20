@@ -96,11 +96,11 @@ end
 if uri == signout_uri or string.sub(uri,-string.len(signout_uri)) == signout_uri then
   ngx.header["Set-Cookie"] = {
     "OauthAccessToken=deleted; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT",
-    "OauthTokenSign==deleted; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT",
-    "OauthExpires==deleted; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT",
-    "OauthName==deleted; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT",
-    "OauthEmail==deleted; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT",
-    "OauthPicture==deleted; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT"
+    "OauthTokenSign=deleted; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT",
+    "OauthExpires=deleted; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT",
+    "OauthName=deleted; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT",
+    "OauthEmail=deleted; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT",
+    "OauthPicture=deleted; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT"
   }
 
   return ngx.redirect(signout_uri .. "?redirect_uri=" .. redir_url)
