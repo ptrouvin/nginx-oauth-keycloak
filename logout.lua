@@ -6,6 +6,7 @@
 -- Author: Pascal Trouvin
 --
 -- History:
+-- 20161020: fix '==' in cookies deletion
 -- 20160208: do not expose OAUTHv2 JWT token anymore: security issue, 
 --           because unable to verify the signature and thus can be manually updated to gain unauthorized access
 -- 20160202: fix logout
@@ -30,11 +31,11 @@ end
 
 ngx.header["Set-Cookie"] = {
 "OauthAccessToken=deleted; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT",
-"OauthTokenSign==deleted; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT",
-"OauthExpires==deleted; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT",
-"OauthName==deleted; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT",
-"OauthEmail==deleted; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT",
-"OauthPicture==deleted; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT"
+"OauthTokenSign=deleted; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT",
+"OauthExpires=deleted; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT",
+"OauthName=deleted; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT",
+"OauthEmail=deleted; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT",
+"OauthPicture=deleted; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT"
 }
 return ngx.redirect(signout_uri .. "?redirect_uri=" .. redir_url)
 
