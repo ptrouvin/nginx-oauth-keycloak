@@ -29,68 +29,16 @@ http {
 		server_name         $NGINX_SERVERNAME;
 		access_log /dev/stdout;
 
-		#rewrite ^(.*) https://$host$1 permanent;
-		
-		    uninitialized_variable_warn off;
+	    uninitialized_variable_warn off;
 			
-	set $ngo_token_secret "$NGINX_TOKEN_SECRET"; # password to protect 
-	set $ngo_client_id "nginx-oauth";
-	set $ngo_secure_cookies "$NGINX_SECURE_COOKIES"; # true|false
-	set $ngo_user "true";
-	set $ngo_email_as_user "true";
-	set $ngo_groups_required "$NGINX_GROUPS_REQUIRED"; # group-test-oauth
-	set $ngo_rancher "$NGINX_RANCHER"; # rancher
-	set $ngo_keycloak_realm "$NGINX_KEYCLOAK_REALM"; # CAMP
-    #set $ngo_tenant_id "c69f849e-7486-400c-a6c0-66255342b7e6";
-    set $ngo_debug "true";
-	set $session_cookie_httponly "false"; # required
-    set $session_cipher "none";
-    set $ngo_callback_url "http://$NGINX_SERVERNAME";
-	set $ngo_callback_auth "$ngo_callback_url/auth/realms/$ngo_keycloak_realm/protocol/openid-connect/auth?client_id=$ngo_client_id";
-	set $ngo_callback_logout "$ngo_callback_url/auth/realms/$ngo_keycloak_realm/protocol/openid-connect/logout";
-	
-	# URL to keycloak token request 
-	set $ngo_callback_token "$ngo_callback_url/auth/realms/$ngo_keycloak_realm/protocol/openid-connect/token";
 
-    location /auth {
-		proxy_set_header Host               $host;
-        proxy_set_header X-Real-IP          $remote_addr:$remote_port;
-        proxy_set_header X-Forwarded-For    $proxy_add_x_forwarded_for;
-		proxy_pass http://keycloak;
-    }
+		location / {
+			
+			rewrite ^(.*) https://$host$1;
 
-    location / {
-		
-		access_by_lua_file "/opt/nginx-oauth-keycloak/access.lua";
-
-		proxy_set_header Host $host;
-		proxy_set_header X-Forwarded-Proto $scheme;
-		proxy_set_header X-Forwarded-Port $server_port;
-		proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-		proxy_pass http://$ngo_rancher:8080;
-		proxy_http_version 1.1;
-		proxy_set_header Upgrade $http_upgrade;
-		proxy_set_header Connection "Upgrade";
-		proxy_pass_header       Authorization;
-		proxy_pass_request_headers      on;
-		# This allows the ability for the execute shell window to remain open for up to 15 minutes. Without this parameter, the default is 1 minute and will automatically close.
-		proxy_read_timeout 900s;
-
-    }
+		}
   
     
-	location ~ /signout$ {
-		content_by_lua_file "/opt/nginx-oauth-keycloak/logout.lua";
-	}
-
-	location ~ /roles$ {
-		access_by_lua_file "/opt/nginx-oauth-keycloak/access.lua";
-
-		content_by_lua_file "/opt/nginx-oauth-keycloak/roles.lua";
-	}
-
-
-
 	}
 
 	server {
@@ -144,6 +92,8 @@ http {
 		proxy_set_header Host               $host;
         proxy_set_header X-Real-IP          $remote_addr:$remote_port;
         proxy_set_header X-Forwarded-For    $proxy_add_x_forwarded_for;
+		proxy_set_header X-Forwarded-Proto  $scheme;
+		proxy_set_header X-Forwarded-Port   443;
 		proxy_pass http://keycloak;
     }
 
