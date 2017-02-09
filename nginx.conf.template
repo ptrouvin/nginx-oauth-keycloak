@@ -49,8 +49,28 @@ http {
 
 	geo $block_by_ip {
 		default         1;
-		10.235.8.0/23    0;
-		10.235.10.0/23 0;
+		10.235.10.32/32 0;
+        10.235.10.33/32 0;
+        10.235.10.34/32 0;
+        10.235.10.35/32 0;
+        10.235.10.36/32 0;
+        10.235.10.37/32 0;
+        10.235.10.38/32 0;
+        10.235.10.40/32 0;
+        10.235.10.44/32 0;
+        10.235.10.52/32 0;
+        10.235.10.53/32 0;
+        10.235.10.54/32 0;
+        10.235.10.55/32 0;
+        10.235.8.32/32 0;
+        10.235.8.33/32 0;
+        10.235.8.34/32 0;
+        10.235.8.35/32 0;
+        10.235.8.36/32 0;
+        10.235.8.37/32 0;
+        10.235.8.38/32 0;
+        10.235.8.40/32 0;
+
 	}
 
 	
@@ -105,7 +125,7 @@ http {
 
 		proxy_set_header Host $host;
 		proxy_set_header X-Forwarded-Proto $scheme;
-		proxy_set_header X-Forwarded-Port $server_port;
+		proxy_set_header X-Forwarded-Port 443;
 		proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 		proxy_pass http://$ngo_rancher:8080;
 		proxy_http_version 1.1;
