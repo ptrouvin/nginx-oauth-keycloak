@@ -4,7 +4,7 @@ pid /opt/nginx-oauth-keycloak/run/nginx.pid;
 error_log /dev/stderr warn;
 
 events{
-  worker_connections 32;
+  worker_connections 1024;
 }
 
 http {
@@ -49,6 +49,7 @@ http {
 
 	geo $block_by_ip {
 		default         1;
+		# MUST BE REPLACED BY AN EXTRACT OF ANSIBLE INVENTORY HOSTS CONVERTED TO         <IP>/32 0;# <HOSTNAME>
 		10.235.10.32/32 0;
         10.235.10.33/32 0;
         10.235.10.34/32 0;
@@ -137,7 +138,7 @@ http {
 		proxy_read_timeout 900s;
 
     }
-  
+
     
 	location ~ /signout$ {
 		content_by_lua_file "/opt/nginx-oauth-keycloak/logout.lua";
