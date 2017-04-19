@@ -7,6 +7,7 @@
 -- Author: Pascal Trouvin
 --
 -- History:
+-- 20170330: Fix require resty.http
 -- 20160208: do not expose OAUTHv2 JWT token anymore: security issue, 
 --           because unable to verify the signature and thus can be manually updated to gain unauthorized access
 -- 20160202: fix logout
@@ -36,8 +37,7 @@ local http = require "resty.http"
 local uri = ngx.var.uri
 local uri_args = ngx.req.get_uri_args()
 if _debug then
-	local json=require "cjson"
-	ngx.log(ngx.ERR,"DEBUG: uri args: "..uri.." = "..json.encode(uri_args))
+	ngx.log(ngx.ERR,"DEBUG: uri args: "..uri.." = "..jsonmod.encode(uri_args))
 	ngx.log(ngx.ERR,"DEBUG: uri args: "..ngx.var.request)
 end
 
@@ -68,18 +68,6 @@ local email_as_user = ngx.var.ngo_email_as_user
 -- check if end with a '/'
 if redir_url:sub(redir_url:len()) ~= '/' then
 	redir_url = redir_url .. '/'
-end
-
-
--- required rights to grant access, check that the user belongs to all groups, 
--- that means, the user has all required groups in the groups field of his access_token
--- ngo_groups_required "group_id1, group_id2, ..."
-local groups_required_string = ngx.var.ngo_groups_required or ""
-local groups_required = {}
-if groups_required_string then
-  for g in string.gmatch(groups_required_string, "([^ ,]+)") do
-    table.insert(groups_required, g)
-  end
 end
 
 if _debug then
@@ -122,42 +110,6 @@ function checkAccessControl(access_token)
     ngx.log(ngx.ERR, "DEBUG: claims JSON ".._claims)
   end
   local json_claims = jsonmod.decode(_claims)
-
-  if #groups_required == 0 then
-	return json_claims
-  end
-  
-  local groups = json_claims["groups"]
-  if not groups then
-     local email = json_claims["email"] or json_claims["unique_name"] or json_claims["upn"]
-     ngx.log(ngx.ERR, "User "..email.." access refused, no groups defined")
-     return ngx.exit(ngx.HTTP_UNAUTHORIZED)
-  end
-  if groups_required then
-    -- check for required rights, and then belongs to all required groups
-    local ugrp = {}
-    for _,v in ipairs(groups) do
-      ugrp[v] = 1
-    end
-    
-    if _debug then
-		ngx.log(ngx.ERR, "DEBUG: checkAccessControl: groups="..type(groups).." required="..type(groups_required))
-		ngx.log(ngx.ERR, "DEBUG: checkAccessControl: groups="..jsonmod.encode(groups).." required="..jsonmod.encode(groups_required))
-    end
-
-    
-    for _,v in ipairs(groups_required) do
-      if not ugrp[v] then
-        local email = json_claims["email"] or json_claims["unique_name"] or json_claims["upn"]
-        ngx.log(ngx.ERR, "User "..email.." access refused, missing group "..v)
-        return ngx.exit(ngx.HTTP_UNAUTHORIZED)
-      end
-    end
-  else
-    if _debug then
-    ngx.log(ngx.ERR, "DEBUG: checkAccessControl: no required groups defined")
-    end
-  end
   
   return json_claims
 end
@@ -269,7 +221,7 @@ else
   -- use version 1 cookies so we don't have to encode. MSIE-old beware
   local json  = jsonmod.decode( res.body )
   if _debug then
-  ngx.log(ngx.ERR, "DEBUG: JSON returned: "..res.body)
+    ngx.log(ngx.ERR, "DEBUG: JSON returned: "..res.body)
   end
   local access_token = json["access_token"]
   local expires = ngx.time() + json["expires_in"]
@@ -279,8 +231,8 @@ else
   end
 
   local json_claims = checkAccessControl(access_token)
-  local name = json_claims["name"]
-  local email = json_claims["email"] or json_claims["unique_name"] or json_claims["upn"]
+  local name = json_claims["name"] or json_claims["preferred_username"]
+  local email = json_claims["email"] or json_claims["unique_name"] or json_claims["upn"] or ""
   local picture = json_claims["ipaddr"]
   
   local tokenSign = ngx.encode_base64(ngx.hmac_sha1(token_secret, cb_server_name .. access_token .. email .. expires))
@@ -335,7 +287,7 @@ else
   end
   
   -- Redirect
-  ngx.log(ngx.ERR, "Authorized "..email..", redirecting to "..uri_args["state"])
+  ngx.log(ngx.ERR, "Authorized "..email.."/"..name..", redirecting to "..uri_args["state"])
 
   return ngx.redirect(uri_args["state"]) 
 end

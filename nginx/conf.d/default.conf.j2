@@ -1,0 +1,200 @@
+{% if NGINX_ADD_HEADERS is defined %}{% set ADD_HEADERS=NGINX_ADD_HEADERS.split('|') %}{% endif %}
+
+{% if NGINX_AUTH_METHOD == 'keycloak' %}
+ ##+ default values
+ {% if NGINX_AUTH_DEBUG is not defined %}
+  {% set NGINX_AUTH_DEBUG='false' %}
+ {% endif %}
+ {% if NGINX_AUTH_KEYCLOAK_SECURE_COOKIES is not defined %}
+  {% set NGINX_AUTH_KEYCLOAK_SECURE_COOKIES='true' %}
+ {% endif %}
+ {% if NGINX_AUTH_KEYCLOAK_HOST is not defined %}
+  {% set NGINX_AUTH_KEYCLOAK_HOST='keycloak' %}
+ {% endif %}
+ {% if NGINX_AUTH_KEYCLOAK_ADDR is not defined %}
+  {% if KEYCLOAK_PORT_8080_TCP_ADDR is not defined %}
+   {% set NGINX_AUTH_KEYCLOAK_ADDR='http://'+NGINX_AUTH_KEYCLOAK_HOST+':8080' %}
+  {% else %}
+   {% set NGINX_AUTH_KEYCLOAK_ADDR='http://'+KEYCLOAK_PORT_8080_TCP_ADDR+':8080' %}
+  {% endif %}
+ {% endif %}
+ {% if NGINX_AUTH_KEYCLOAK_TOKEN_SECRET is not defined %}
+  {% set NGINX_AUTH_KEYCLOAK_TOKEN_SECRET= range(1000000,99999999999)|random() %}
+ {% endif %}
+ {% if NGINX_AUTH_KEYCLOAK_REALM is not defined %}
+  {% set NGINX_AUTH_KEYCLOAK_REALM='CAMP' %}
+ {% endif %}
+ {% if NGINX_RESOLVERS is not defined %}
+  {% set NGINX_RESOLVERS='127.0.0.1' %}
+ {% endif %}
+ ##-
+uninitialized_variable_warn off;
+
+set $ngo_token_secret "{{ NGINX_AUTH_KEYCLOAK_TOKEN_SECRET }}"; # password to protect 
+set $ngo_client_id "nginx-oauth";
+set $ngo_secure_cookies "{{ NGINX_AUTH_KEYCLOAK_SECURE_COOKIES }}"; # true|false
+set $ngo_user "true";
+set $ngo_email_as_user "true";
+set $ngo_keycloak_realm "{{ NGINX_AUTH_KEYCLOAK_REALM }}"; # CAMP
+
+set $ngo_debug "{{ NGINX_AUTH_DEBUG }}";
+set $session_cookie_httponly "false"; # required
+set $session_cipher "none";
+set $ngo_callback_url "{{ NGINX_AUTH_URL }}";
+set $ngo_callback_auth "$ngo_callback_url/auth/realms/$ngo_keycloak_realm/protocol/openid-connect/auth?client_id=$ngo_client_id";
+set $ngo_callback_logout "$ngo_callback_url/auth/realms/$ngo_keycloak_realm/protocol/openid-connect/logout";
+
+# URL to keycloak token request 
+#set $ngo_callback_token "$ngo_callback_url/auth/realms/$ngo_keycloak_realm/protocol/openid-connect/token";
+set $ngo_callback_token "{{ NGINX_AUTH_KEYCLOAK_ADDR }}/auth/realms/$ngo_keycloak_realm/protocol/openid-connect/token";
+
+resolver {{ NGINX_RESOLVERS }};
+
+{% endif %}
+
+listen       {{ NGINX_LISTEN_PORT }} default_server;
+server_name  _;
+root         /opt/nginx/html;
+
+underscores_in_headers on;
+
+# define some variables used in the json logs
+set $last_http_x_forwarded_for "";
+if ($http_x_forwarded_for ~ "(\d+\.\d+\.\d+\.\d+)$") {
+    set $last_http_x_forwarded_for $1;
+}
+set $first_http_x_forwarded_for "";
+if ($http_x_forwarded_for ~ "^(\d+\.\d+\.\d+\.\d+)") {
+    set $first_http_x_forwarded_for $1;
+}
+
+{% if NGINX_ALLOW_UPLOAD is defined and NGINX_ALLOW_UPLOAD == 'true' %}
+client_max_body_size {{ NGINX_MAX_BODY_SIZE }}M;
+client_body_timeout 15;
+client_header_timeout 15;
+{% endif %}
+
+location / {
+
+{% if NGINX_AUTH_METHOD == 'basic' %}
+ {% if NGINX_AUTH_BASIC_REALM is defined %}
+  auth_basic            "{{ NGINX_AUTH_BASIC_REALM }}";
+  auth_basic_user_file  {{ NGINX_AUTH_BASIC_FILE }};
+ {% endif %} ## NGINX_AUTH_BASIC_REALM
+{% endif %} ## NGINX_AUTH_BASIC_REALM
+
+{% if NGINX_AUTH_METHOD == 'keycloak' %}
+	{% if NGINX_AUTH_KEYCLOAK_GEOIP is defined %}
+		{% if NGINX_AUTH_DEBUG == 'true' %}
+		log_by_lua_block {
+			local block_by_ip=ngx.var.block_by_ip
+			local remote_addr=ngx.var.remote_addr
+			local realIP = "undef"
+			local forwardedFor = "undef"
+			-- check headers for [X-Real-IP,X-Forwarded-For]
+			local h = ngx.req.get_headers()
+			for k,v in pairs(h) do
+				if k == "X-Real-IP" then
+					realIP = v
+				elseif k == "X-Forwarded-For" then
+					forwardedFor = v
+				end
+			end
+			
+			ngx.log(ngx.ERR,"DEBUG: default.conf: module geo/ip filtering: IP(" .. remote_addr .. "/" .. realIP .. "@" .. forwardedFor .. ") set block_by_ip=" .. block_by_ip)
+		}
+		{% endif %}
+		if ($block_by_ip) {
+			access_by_lua_file "{{ NGINX_AUTH_KEYCLOAK_LUAPATH }}/access.lua";
+		}
+	{% else %}
+		access_by_lua_file "{{ NGINX_AUTH_KEYCLOAK_LUAPATH }}/access.lua";
+	{% endif %} ## NGINX_AUTH_KEYCLOAK_GEOIP
+{% endif %} ## NGINX_AUTH_BASIC_REALM
+
+  proxy_pass            {{ NGINX_PROXYPASS }} ;
+
+  proxy_set_header      Host                              $http_host;
+  proxy_set_header      X-Real-IP                         $remote_addr;
+  proxy_set_header      X-Forwarded-For                   $proxy_add_x_forwarded_for;
+#  proxy_set_header      X-Forwarded-Proto                 $scheme;
+  proxy_set_header      X-Forwarded-Proto                 https;
+
+{% if NGINX_PROXY_WEBSOCKET_ENABLED is defined and NGINX_PROXY_WEBSOCKET_ENABLED == 'true' %}
+  # For websockets
+  proxy_set_header Upgrade $http_upgrade;
+  proxy_set_header Connection "upgrade";
+  proxy_http_version 1.1;
+{% endif %}
+
+  # Add HSTS headers in HTTPS ONLY
+  set $hsts 0;
+  if ($scheme = "https") {
+    set $hsts 1;
+  }
+  if ($http_x_forwarded_proto = "https") {
+    set $hsts 1;
+  }
+  # add basic headers for security 
+  if ($hsts = 1) {
+    add_header Strict-Transport-Security "max-age=31536000; includeSubdomains;";
+{% if ADD_HEADERS is defined %}{% for headers in ADD_HEADERS %}
+    add_header {{ headers }} always;
+{% endfor %}{% endif %}
+  }
+  if ($hsts = 0) {
+{% if ADD_HEADERS is defined %}{% for headers in ADD_HEADERS %}
+    add_header {{ headers }} always;
+{% endfor %}{% endif %}
+  }
+
+}
+
+error_page 404 /404.html;
+  location = /40x.html {
+}
+
+error_page 500 502 503 504 /50x.html;
+  location = /50x.html {
+}
+
+{% if NGINX_AUTH_METHOD == 'keycloak' %}
+location /auth/resources {
+	proxy_set_header Host               $host;
+	proxy_set_header X-Real-IP          $remote_addr:$remote_port;
+	proxy_set_header X-Forwarded-For    $proxy_add_x_forwarded_for;
+#	proxy_set_header X-Forwarded-Proto  $scheme;
+	proxy_set_header X-Forwarded-Proto  https;
+	proxy_set_header X-Forwarded-Port   443;
+	proxy_pass {{ NGINX_AUTH_KEYCLOAK_ADDR }};
+}
+
+location /auth/realms/{{ NGINX_AUTH_KEYCLOAK_REALM }} {
+	proxy_set_header Host               $host;
+	proxy_set_header X-Real-IP          $remote_addr:$remote_port;
+	proxy_set_header X-Forwarded-For    $proxy_add_x_forwarded_for;
+#	proxy_set_header X-Forwarded-Proto  $scheme;
+	proxy_set_header X-Forwarded-Proto  https;
+	proxy_set_header X-Forwarded-Port   443;
+	proxy_pass {{ NGINX_AUTH_KEYCLOAK_ADDR }};
+}
+
+location ~ /signout$ {
+	content_by_lua_file "{{ NGINX_AUTH_KEYCLOAK_LUAPATH }}/logout.lua";
+}
+
+{% endif %} ## NGINX_AUTH_BASIC_REALM
+
+	
+{% if NGINX_GZIP_ENABLED is defined and NGINX_GZIP_ENABLED == 'true' %}
+# Compression
+gzip              on;
+gzip_disable      msie6;
+gzip_buffers      64 4k;
+gzip_comp_level   4;
+gzip_http_version 1.1;
+gzip_min_length   1280;
+gzip_types        text/plain text/css application/javascript application/x-javascript text/xml application/xml application/xml+rss text/javascript image/x-icon image/bmp;
+gzip_vary         on;
+gzip_proxied      any;
+{% endif %}
